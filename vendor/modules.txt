@@ -1,6 +1,9 @@
 # github.com/golang/protobuf v1.5.2
 ## explicit; go 1.9
 github.com/golang/protobuf/proto
+# github.com/google/go-github/v50 v50.1.0
+## explicit; go 1.17
+github.com/google/go-github/v50/github
 # github.com/google/go-querystring v1.1.0
 ## explicit; go 1.10
 github.com/google/go-querystring/query
@@ -16,6 +19,15 @@ github.com/hashicorp/go-retryablehttp
 # github.com/xanzy/go-gitlab v0.80.2
 ## explicit; go 1.18
 github.com/xanzy/go-gitlab
+# golang.org/x/crypto v0.0.0-20210817164053-32db794688a5
+## explicit; go 1.17
+golang.org/x/crypto/cast5
+golang.org/x/crypto/openpgp
+golang.org/x/crypto/openpgp/armor
+golang.org/x/crypto/openpgp/elgamal
+golang.org/x/crypto/openpgp/errors
+golang.org/x/crypto/openpgp/packet
+golang.org/x/crypto/openpgp/s2k
 # golang.org/x/net v0.4.0
 ## explicit; go 1.17
 golang.org/x/net/context

@@ -1,3 +1,6 @@
+// Original source derived from:
+// https://gist.github.com/Ompluscator/572e474ee054d72259ecffd010fec630/
+
 package main
 
 import (
@@ -53,9 +56,11 @@ func main() {
 
 	// setup server
 	router := mux.NewRouter()
+	router.HandleFunc("/{module:.+}/@v/list", list).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.info", version).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.mod", mod).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.zip", archive).Methods(http.MethodGet)
+	http.Handle("/", router)
 
 	// Configure the go HTTP server
 	server := &http.Server{
@@ -64,7 +69,6 @@ func main() {
 		ReadTimeout:    10 * time.Hour,
 		WriteTimeout:   10 * time.Hour,
 		MaxHeaderBytes: 1 << 20,
-		Handler:        router,
 	}
 
 	if *enableTLS {
