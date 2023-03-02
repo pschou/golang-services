@@ -1,0 +1,12 @@
+modules:
+  company.com/package-a: github.com/pkg-a
+  company.com/package-b: github.com/pkg-b
+
+git-token: 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
+git-url: https://github.com
+
+regexp:
+- match: "mytest.domain.A/([^/*])"
+  replace: "another.domain/a/$1"
+- match: "mytest.domain.B/([^/*])"
+  replace: "another.domain/b/$1"
