@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -19,73 +20,165 @@ func version(w http.ResponseWriter, r *http.Request) {
 	}
 	// find a project ID by module name
 	module := mux.Vars(r)["module"]
-	project, myClient, ok := Lookup(module)
+	lr, ok := Lookup(module)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	var reply VersionData
-	reply.Origin.VCS = "git"
-	reply.Origin.URL = "https://" + module
-	// find a commit from Gitlab by version name
-	version := mux.Vars(r)["version"]
-
-	parts := strings.Split(version, "-")
-	if len(parts) == 3 && len(parts[1]) == 14 { // Case where we have a tagged version
-		version = parts[2]
+	ver, notice := getVersion(lr, mux.Vars(r)["version"])
+	if notice != "" {
+		http.Error(w, notice, http.StatusNotFound)
+		return
 	}
 
-	switch client := myClient.(type) {
-	case *gitlab.Client:
-		commit, _, err := client.Commits.GetCommit(project, version)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// build output
-		finalVersion := fmt.Sprintf(
-			"v0.0.0-%s-%s", // v0.0.0 is only if there is no tag, otherwise tag name should be added
-			commit.CommittedDate.Format("20060102150405"),
-			commit.ID[0:12],
-		)
-
-		reply.Version = finalVersion
-		reply.Time = commit.CommittedDate.Format(time.RFC3339)
-		reply.Origin.Hash = commit.ID
-		json.NewEncoder(w).Encode(reply)
-	case *github.Client:
-		parts := strings.SplitN(project, "/", 3)
-		if len(parts) == 1 {
-			http.Error(w, "Invalid project: "+project, http.StatusInternalServerError)
-			return
-		}
-		commit, _, err := client.Repositories.GetCommit(ctx, parts[0], parts[1], version,
-			&github.ListOptions{PerPage: 10})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// build output
-		sha := *(commit.SHA)
-		finalVersion := fmt.Sprintf(
-			"v0.0.0-%s-%s", // v0.0.0 is only if there is no tag, otherwise tag name should be added
-			commit.Commit.Committer.Date.Format("20060102150405"),
-			sha[0:12],
-		)
-
-		reply.Version = finalVersion
-		reply.Time = commit.Commit.Committer.Date.Format(time.RFC3339)
-		reply.Origin.Hash = sha
-		json.NewEncoder(w).Encode(reply)
+	if *verbose {
+		fmt.Printf("ver: %#v\n", ver)
 	}
+	json.NewEncoder(w).Encode(ver)
 }
 
 type VersionData struct {
 	Version, Time string
 	Origin        struct {
-		VCS, URL, Hash string
+		VCS  string
+		URL  string `json:",omitempty"`
+		Ref  string `json:",omitempty"`
+		Hash string
 	}
+	cacheDir, cachePath string
+}
+
+func getVersion(lr *lookupResult, version string) (reply VersionData, notice string) {
+	var commitTime time.Time
+	var commitHash string
+
+	if data.LocalCache != "" {
+		if cache := checkCache(path.Join(lr.base, lr.group, lr.repo, lr.cleanPath), version); cache != nil {
+			if *verbose {
+				fmt.Println("found cache")
+			}
+			var err error
+			commitTime, err = time.ParseInLocation("20060102150405", cache.date, time.UTC)
+
+			if err == nil {
+				reply.Origin.Hash = cache.sha
+				reply.Origin.VCS = "cache"
+				reply.Time = commitTime.UTC().Format(time.RFC3339)
+				reply.Version = cache.ver
+				reply.cacheDir = cache.dir
+				reply.cachePath = cache.path
+				return
+			}
+		}
+	}
+
+	var search, versionDate string
+	var isVersion bool
+	if hyphen := strings.LastIndex(version, "-"); hyphen >= 20 && len(version) >= 34 && hyphen < len(version)-4 {
+		isVersion = true
+		search = version[hyphen+1:]
+		versionDate = version[hyphen-14 : hyphen]
+	} else {
+		search = version
+	}
+	search = strings.TrimSuffix(search, "+incompatible")
+
+	if *verbose {
+		log.Println("looking up", search)
+	}
+
+	if reply.Origin.VCS == "" {
+		switch client := lr.git.(type) {
+		case *gitlab.Client:
+			commit, _, err := client.Commits.GetCommit(lr.groupRepo, search)
+			if err != nil {
+				notice = fmt.Sprintf("not found: %s@%s: invalid version: unknown revision, %s",
+					lr.base+"/"+lr.groupRepo, version, err)
+				return
+			}
+			commitTime = commit.CommittedDate.UTC()
+			commitHash = commit.ID
+			reply.Origin.VCS = "git"
+
+			{
+				//fmt.Println("looking up tag", version)
+				tag, _, _ := client.Tags.GetTag(lr.groupRepo, version)
+				//adat, _ := json.MarshalIndent(tag, "", "  ")
+				//fmt.Printf("commit: %s\n", adat)
+				if tag != nil {
+					reply.Version = tag.Name
+				}
+			}
+			reply.Origin.URL = "https://" + lr.baseGroupRepo + ".git"
+		case *github.Client:
+			{
+				commit, _, err := client.Repositories.GetCommit(ctx, lr.group, lr.repo, search,
+					&github.ListOptions{PerPage: 1})
+				if err != nil {
+					notice = fmt.Sprintf("not found: %s@%s: invalid version: unknown revision, %s",
+						lr.base+"/"+lr.groupRepo, version, err)
+					return
+				}
+				if commit != nil {
+					commitTime = commit.Commit.Committer.Date.UTC()
+					commitHash = *(commit.SHA)
+					reply.Origin.VCS = "git"
+				}
+			}
+			//	}
+
+			/*{ // Test for tag name
+				release, _, err := client.Repositories.GetReleaseByTag(ctx, lr.group, lr.repo, version)
+				if err != nil {
+					log.Println("error looking up tag", version, err)
+				}
+				if release != nil {
+					reply.Version = *release.TagName
+				}
+			}*/
+			reply.Origin.URL = "https://" + lr.baseGroupRepo
+		}
+	}
+	if commitHash == "" {
+		notice = fmt.Sprintf("not found: %s@%s: invalid version: unknown revision",
+			lr.baseGroupRepo, version)
+		return
+	}
+
+	// if the hash was not used to search
+	if !strings.HasPrefix(commitHash, search) {
+		reply.Version = version
+	}
+
+	// build output
+	date := commitTime.Format("20060102150405")
+	if data.LocalCache != "" {
+		reply.cacheDir = path.Join(data.LocalCache, lr.base, lr.groupRepo)
+	}
+
+	if reply.Version == "" {
+		reply.Version = fmt.Sprintf(
+			"v0.0.0-%s-%s", // v0.0.0 is only if there is no tag, otherwise tag name should be added
+			date, commitHash[0:12],
+		)
+		if reply.cacheDir != "" {
+			reply.cachePath = reply.cacheDir + "/" + date + "-" + commitHash + ".tgz"
+		}
+	} else {
+		if reply.cacheDir != "" {
+			reply.cachePath = reply.cacheDir + "/" + reply.Version + date + "-" + commitHash + ".tgz"
+		}
+		reply.Origin.Ref = "refs/tags/" + reply.Version
+	}
+
+	reply.Time = commitTime.Format(time.RFC3339)
+	reply.Origin.Hash = commitHash
+
+	// Test for date mismatch
+	if isVersion && versionDate != date {
+		notice = fmt.Sprintf("not found: %s@%s: invalid pseudo-version: does not match version-control timestamp (expected %s)",
+			lr.baseGroupRepo, versionDate, date)
+	}
+	return
 }

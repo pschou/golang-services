@@ -16,6 +16,12 @@ github.com/hashicorp/go-cleanhttp
 # github.com/hashicorp/go-retryablehttp v0.7.1
 ## explicit; go 1.13
 github.com/hashicorp/go-retryablehttp
+# github.com/pschou/go-memdiskbuf v0.0.0-20230224193926-5c075fe07f50
+## explicit; go 1.18
+github.com/pschou/go-memdiskbuf
+# github.com/pschou/go-tease v0.0.0-20221025010209-0509f9668b80
+## explicit; go 1.17
+github.com/pschou/go-tease
 # github.com/xanzy/go-gitlab v0.80.2
 ## explicit; go 1.18
 github.com/xanzy/go-gitlab

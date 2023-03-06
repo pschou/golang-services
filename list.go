@@ -17,20 +17,32 @@ func list(w http.ResponseWriter, r *http.Request) {
 	}
 	// find a project ID by module name
 	module := mux.Vars(r)["module"]
-	project, myClient, ok := Lookup(module)
-	//fmt.Println("found", project, client, ok)
+	lr, ok := Lookup(module)
+	fmt.Printf("found %#v\n", lr)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	switch client := myClient.(type) {
+	perPage := 10
+	if lr.majorVer != "" {
+		perPage = 1000
+	}
+	switch client := lr.git.(type) {
 	case *gitlab.Client:
 		//fmt.Println("looking up releases")
-		releases, _, err := client.Releases.ListReleases(project,
-			&gitlab.ListReleasesOptions{ListOptions: gitlab.ListOptions{PerPage: 10}})
+		releases, _, err := client.Releases.ListReleases(lr.groupRepo,
+			&gitlab.ListReleasesOptions{ListOptions: gitlab.ListOptions{PerPage: perPage}})
 		//fmt.Println("err: ", err)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if lr.majorVer != "" {
+			for _, entry := range releases {
+				if strings.HasPrefix(entry.TagName, lr.majorVer+".") || entry.TagName == lr.majorVer {
+					fmt.Fprintf(w, "%s\n", entry.TagName)
+				}
+			}
 			return
 		}
 
@@ -42,25 +54,29 @@ func list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		commits, _, err := client.Commits.ListCommits(project,
+		commits, _, err := client.Commits.ListCommits(lr.groupRepo,
 			&gitlab.ListCommitsOptions{ListOptions: gitlab.ListOptions{PerPage: 10}})
 		for _, commit := range commits {
 			// build output
 			fmt.Fprintf(w,
 				"v0.0.0-%s-%s\n", // v0.0.0 is only if there is no tag, otherwise tag name should be added
-				commit.CommittedDate.Format("20060102150405"),
+				commit.CommittedDate.UTC().Format("20060102150405"),
 				commit.ID[0:12],
 			)
 		}
 		//fmt.Printf("commits: %s %#v\n", err, commits)
 	case *github.Client:
-		parts := strings.SplitN(project, "/", 3)
-		if len(parts) == 1 {
-			http.Error(w, "Invalid project: "+project, http.StatusInternalServerError)
+		releases, _, err := client.Repositories.ListTags(ctx, lr.group, lr.repo,
+			&github.ListOptions{PerPage: perPage})
+		fmt.Println("err:", err)
+		if lr.majorVer != "" {
+			for _, entry := range releases {
+				if strings.HasPrefix(*entry.Name, lr.majorVer+".") || *entry.Name == lr.majorVer {
+					fmt.Fprintf(w, "%s\n", *entry.Name)
+				}
+			}
 			return
 		}
-		releases, _, _ := client.Repositories.ListTags(ctx, parts[0], parts[1],
-			&github.ListOptions{PerPage: 10})
 		if len(releases) > 0 {
 			//fmt.Printf("releases: %s %#v\n", err, releases)
 			for _, entry := range releases {
@@ -69,7 +85,7 @@ func list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		commits, _, err := client.Repositories.ListCommits(ctx, parts[0], parts[1],
+		commits, _, err := client.Repositories.ListCommits(ctx, lr.group, lr.repo,
 			&github.CommitsListOptions{ListOptions: github.ListOptions{PerPage: 10}})
 		if *verbose && err != nil {
 			log.Println("error listing", err)
@@ -82,7 +98,7 @@ func list(w http.ResponseWriter, r *http.Request) {
 			sha := *(commit.SHA)
 			fmt.Fprintf(w,
 				"v0.0.0-%s-%s\n", // v0.0.0 is only if there is no tag, otherwise tag name should be added
-				commit.Commit.Committer.Date.Format("20060102150405"),
+				commit.Commit.Committer.Date.UTC().Format("20060102150405"),
 				sha[0:12],
 			)
 		}

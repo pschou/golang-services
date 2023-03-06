@@ -54,14 +54,19 @@ func main() {
 	loadTLS()
 	loadConfig()
 
-	// setup server
+	// setup server for proxying packages
 	router := mux.NewRouter()
 	router.HandleFunc("/{module:.+}/@v/list", list).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.info", version).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.mod", mod).Methods(http.MethodGet)
 	router.HandleFunc("/{module:.+}/@v/{version}.zip", archive).Methods(http.MethodGet)
-	http.Handle("/", router)
+	router.HandleFunc("/{module:.+}/@v/{version}.sum", sum).Methods(http.MethodGet)
+	router.HandleFunc("/{module:.+}/@latest", latest).Methods(http.MethodGet)
 
+	// setup server for summing packages
+	router.HandleFunc("/lookup/{module:.+}@{version}", sum).Methods(http.MethodGet)
+
+	http.Handle("/", router)
 	// Configure the go HTTP server
 	server := &http.Server{
 		Addr:           *listen,

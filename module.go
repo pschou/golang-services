@@ -1,9 +1,14 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path"
 	"strings"
 
 	"github.com/google/go-github/v50/github"
@@ -13,49 +18,62 @@ import (
 
 func mod(w http.ResponseWriter, r *http.Request) {
 	if *verbose {
-		log.Printf("Got module request: %#v", r)
+		log.Printf("Got module request: %#v  module: %q", r.RequestURI, mux.Vars(r)["module"])
 	}
 	// find a project ID by module name
 	module := mux.Vars(r)["module"]
-	project, myClient, ok := Lookup(module)
+	lr, ok := Lookup(module)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	finalVersion := mux.Vars(r)["version"]
-
-	parts := strings.Split(finalVersion, "-")
-	if len(parts) != 3 {
-		http.Error(w, "invalid version", http.StatusInternalServerError)
+	ver, notice := getVersion(lr, mux.Vars(r)["version"])
+	if notice != "" {
+		http.Error(w, notice, http.StatusNotFound)
 		return
 	}
 
-	// find a go.mod content from Gitlab by version name
-	version := parts[2]
+	if ver.cachePath != "" { // Use cache if we got it!
+		if fh, err := os.Open(ver.cachePath); err == nil {
+			defer fh.Close()
+			gz, err := gzip.NewReader(fh)
+			if err != nil {
+				log.Println("error reading gzip", ver.cachePath)
+				return
+			}
+			tr := tar.NewReader(gz)
+			var item *tar.Header
+			for item, err = tr.Next(); err == nil; item, err = tr.Next() {
+				if parts := strings.SplitN(item.Name, "/", 2); len(parts) > 1 {
+					if dn, fn := path.Split(parts[1]); dn == lr.cleanPath && fn == "go.mod" {
+						io.Copy(w, tr)
+						return
+					}
+				}
+			}
+			fmt.Fprintf(w, "module %s\n", lr.orig)
+			return
+		}
+	}
 
-	switch client := myClient.(type) {
+	switch client := lr.git.(type) {
 	case *gitlab.Client:
-		content, _, err := client.RepositoryFiles.GetRawFile(project, "go.mod", &gitlab.GetRawFileOptions{
-			Ref: &version,
+		content, _, err := client.RepositoryFiles.GetRawFile(lr.groupRepo, path.Join(lr.cleanPath, "go.mod"), &gitlab.GetRawFileOptions{
+			Ref: &ver.Origin.Hash,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			fmt.Fprintf(w, "module %s\n", lr.baseGroupRepo)
 			return
 		}
 
 		// write go.mod in output
 		io.WriteString(w, string(content))
 	case *github.Client:
-		parts := strings.SplitN(project, "/", 3)
-		if len(parts) == 1 {
-			http.Error(w, "Invalid project: "+project, http.StatusInternalServerError)
-			return
-		}
-		content, _, err := client.Repositories.DownloadContents(ctx, parts[0], parts[1], "go.mod",
-			&github.RepositoryContentGetOptions{Ref: version})
+		content, _, err := client.Repositories.DownloadContents(ctx, lr.group, lr.repo, path.Join(lr.cleanPath, "go.mod"),
+			&github.RepositoryContentGetOptions{Ref: ver.Origin.Hash})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			fmt.Fprintf(w, "module %s\n", lr.orig)
 			return
 		}
 

@@ -11,11 +11,11 @@ The Syntax of the config.yml:
 modules:
   company.com/package-a: gitlab.com/pkg-a
   company.com/package-b: gitlab.com/pkg-b
-|
+
 # default git credentials to use
 git-token: AAAAAAAAAABBBBBBBBBBBBBCCCCCCCCCCDDDDDDD
 git-url: https://gitlab.com
-|
+
 regexp:
 - match: "mytest.domain.A/([^/*])"
   replace: "another.domain/a/$1"
